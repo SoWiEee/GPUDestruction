@@ -1,0 +1,4 @@
+# ninja log v6
+13	272	7834530825315148	CMakeFiles/GPUDestruction.dir/vendor/glad/src/glad.c.obj	d758f1fa5377ab64
+4	354	7834530825155849	CMakeFiles/GPUDestruction.dir/main.cpp.obj	37599d760dcf835e
+355	889	7834530828629770	GPUDestruction.exe	328fbaf6be2b64ef
