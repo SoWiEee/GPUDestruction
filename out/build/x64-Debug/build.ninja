@@ -51,7 +51,7 @@ build cmake_object_order_depends_target_GPUDestruction: phony || .
 
 build CMakeFiles\GPUDestruction.dir\main.cpp.obj: CXX_COMPILER__GPUDestruction_unscanned_Debug C$:\Users\MintIce\Programming\GPUDestruction\main.cpp || cmake_object_order_depends_target_GPUDestruction
   FLAGS = /DWIN32 /D_WINDOWS /GR /EHsc /Zi /Ob0 /Od /RTC1 -std:c++17 -MDd
-  INCLUDES = -IC:\Users\MintIce\Programming\GPUDestruction\vendor\glad\include -IC:\Users\MintIce\Programming\GPUDestruction\vendor\glfw\include
+  INCLUDES = -IC:\Users\MintIce\Programming\GPUDestruction\vendor\glad\include -IC:\Users\MintIce\Programming\GPUDestruction\vendor\glfw\include -IC:\Users\MintIce\Programming\GPUDestruction\vendor\glm
   OBJECT_DIR = CMakeFiles\GPUDestruction.dir
   OBJECT_FILE_DIR = CMakeFiles\GPUDestruction.dir
   TARGET_COMPILE_PDB = CMakeFiles\GPUDestruction.dir\
@@ -59,7 +59,7 @@ build CMakeFiles\GPUDestruction.dir\main.cpp.obj: CXX_COMPILER__GPUDestruction_u
 
 build CMakeFiles\GPUDestruction.dir\vendor\glad\src\glad.c.obj: C_COMPILER__GPUDestruction_unscanned_Debug C$:\Users\MintIce\Programming\GPUDestruction\vendor\glad\src\glad.c || cmake_object_order_depends_target_GPUDestruction
   FLAGS = /DWIN32 /D_WINDOWS /Zi /Ob0 /Od /RTC1 -MDd
-  INCLUDES = -IC:\Users\MintIce\Programming\GPUDestruction\vendor\glad\include -IC:\Users\MintIce\Programming\GPUDestruction\vendor\glfw\include
+  INCLUDES = -IC:\Users\MintIce\Programming\GPUDestruction\vendor\glad\include -IC:\Users\MintIce\Programming\GPUDestruction\vendor\glfw\include -IC:\Users\MintIce\Programming\GPUDestruction\vendor\glm
   OBJECT_DIR = CMakeFiles\GPUDestruction.dir
   OBJECT_FILE_DIR = CMakeFiles\GPUDestruction.dir\vendor\glad\src
   TARGET_COMPILE_PDB = CMakeFiles\GPUDestruction.dir\

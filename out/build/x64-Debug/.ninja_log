@@ -1,8 +1,7 @@
 # ninja log v6
 13	272	7834530825315148	CMakeFiles/GPUDestruction.dir/vendor/glad/src/glad.c.obj	d758f1fa5377ab64
-4	354	7834530825155849	CMakeFiles/GPUDestruction.dir/main.cpp.obj	37599d760dcf835e
-355	889	7834530828629770	GPUDestruction.exe	328fbaf6be2b64ef
-7	655	7834541754149540	CMakeFiles/GPUDestruction.dir/main.cpp.obj	37599d760dcf835e
-656	973	7834541760642494	GPUDestruction.exe	328fbaf6be2b64ef
 4	594	7834548696010016	CMakeFiles/GPUDestruction.dir/main.cpp.obj	37599d760dcf835e
 595	855	7834548701936205	GPUDestruction.exe	328fbaf6be2b64ef
+15	311	7834551621237978	CMakeFiles/GPUDestruction.dir/vendor/glad/src/glad.c.obj	765c7d887860b50a
+5	514	7834552224233277	CMakeFiles/GPUDestruction.dir/main.cpp.obj	486bc5117b2efb7c
+517	754	7834552229316433	GPUDestruction.exe	328fbaf6be2b64ef
