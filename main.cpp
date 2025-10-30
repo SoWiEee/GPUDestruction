@@ -1,28 +1,33 @@
-#include <glad/glad.h>
+ï»¿#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include "kernel.h"
+#include <cuda_runtime.h>
+#include <cuda_gl_interop.h>
+
+extern const int NUM_INSTANCES;
 
 // vertex shader
 const char* vertexShaderSource = R"glsl(
     #version 450 core
     
-    layout (location = 0) in vec3 aPos;     // ³»ÂI¦ì¸m
-    layout (location = 1) in vec3 aColor;   // ³»ÂIÃC¦â
+    layout (location = 0) in vec3 aPos;
+    layout (location = 1) in vec3 aColor;
 
-    out vec3 ourColor;
+    layout (location = 2) in mat4 model;
 
-    // receive MVP matrix
-    uniform mat4 model;
     uniform mat4 view;
     uniform mat4 projection;
 
+    out vec3 ourColor;
+
     void main() {
-        // ³Ì²×¦ì¸m = §ë¼v * µø¹Ï * ¼Ò«¬ * ­ì©l¦ì¸m
         gl_Position = projection * view * model * vec4(aPos, 1.0);
-        ourColor = aColor; // ±NÃC¦â¶Ç»¼¤U¥h
+        ourColor = aColor;
     }
 )glsl";
 
@@ -48,19 +53,39 @@ void processInput(GLFWwindow* window) {
         glfwSetWindowShouldClose(window, true);
 }
 
+void cpu_update_physics(std::vector<glm::mat4>& modelMatrices, float time)
+{
+    for (int i = 0; i < NUM_INSTANCES; ++i)
+    {
+        // simple animation
+        float radius = 5.0f + (float)i / NUM_INSTANCES * 10.0f;
+        float angle = time * 0.5f + (float)i * 0.01f;
+
+        float x = radius * cos(angle);
+        float y = 0.0f;
+        float z = radius * sin(angle);
+
+        glm::vec3 position = glm::vec3(x, y, z);
+
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, position);
+        model = glm::rotate(model, time * 2.0f + (float)i, glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::scale(model, glm::vec3(0.1f));
+
+        // å°‡è¨ˆç®—å¥½çš„çŸ©é™£å­˜å…¥ CPU çš„ vector
+        modelMatrices[i] = model;
+    }
+}
+
 int main() {
-    // GLFW init
+    // init
     if (!glfwInit()) return -1;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(800, 600, "GPUDestruction Project - Step 4: 3D Cube!", NULL, NULL);
-    if (window == NULL) {
-        std::cerr << "Failed to create GLFW window" << std::endl;
-        glfwTerminate();
-        return -1;
-    }
+    GLFWwindow* window = glfwCreateWindow(1280, 720, "GPUDestruction Step 5: CUDA + OpenGL Interop!", NULL, NULL);
+    if (window == NULL) { /* ... error check ... */ }
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
@@ -69,52 +94,45 @@ int main() {
         return -1;
     }
 
-    // z-buffer
     glEnable(GL_DEPTH_TEST);
 
+    unsigned int shaderProgram = glCreateProgram();
+    glLinkProgram(shaderProgram);
+
+    // error check
+    int success; char infoLog[512];
     // vertex shader
     unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-    glCompileShader(vertexShader);
-
+    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL); glCompileShader(vertexShader);
+    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success); if (!success) { glGetShaderInfoLog(vertexShader, 512, NULL, infoLog); std::cerr << "VS COMPILE ERROR: " << infoLog << std::endl; }
     // fragment shader
     unsigned int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-    glCompileShader(fragmentShader);
+    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL); glCompileShader(fragmentShader);
+    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success); if (!success) { glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog); std::cerr << "FS COMPILE ERROR: " << infoLog << std::endl; }
+    glAttachShader(shaderProgram, vertexShader); glAttachShader(shaderProgram, fragmentShader); glLinkProgram(shaderProgram);
+    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success); if (!success) { glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog); std::cerr << "SHADER LINK ERROR: " << infoLog << std::endl; }
+    glDeleteShader(vertexShader); glDeleteShader(fragmentShader);
 
-    // link shader
-    unsigned int shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
 
-    // ©w¸q¤è¶ôªº 8 ­Ó³»ÂI
-    // ¤@­Ó¤è¶ô¦³ 6 ­Ó­±¡A¨C­Ó­± 2 ­Ó¤T¨¤§Î¡A¦@ 12 ­Ó¤T¨¤§Î
-    // 12 * 3 = 36 ­Ó³»ÂI¡C§Ú­Ì¨Ï¥Î¯Á¤Þ¨Ó­«½Æ¨Ï¥Î 8 ­Ó³»ÂI¡C
+    // cude vertex data
     float vertices[] = {
-        // «á­±
         -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, 0.0f, // 0
          0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f, // 1
          0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 0.0f, // 2
         -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f, // 3
-        // «e­±
         -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f, // 4
          0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 1.0f, // 5
          0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f, // 6
         -0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 1.0f  // 7
     };
 
-    // 2. ©w¸q 12 ­Ó¤T¨¤§Î (36 ­Ó¯Á¤Þ)
-    // ³o¨Ç¯Á¤Þ«ü¦V¤W­± 'vertices' °}¦Cªº¯Á¤Þ (0 ¨ì 7)
     unsigned int indices[] = {
-        0, 1, 2,  2, 3, 0, // «á­±
-        4, 5, 6,  6, 7, 4, // «e­±
-        7, 6, 2,  2, 3, 7, // ¤W­±
-        4, 5, 1,  1, 0, 4, // ¤U­±
-        4, 7, 3,  3, 0, 4, // ¥ª­±
-        5, 6, 2,  2, 1, 5  // ¥k­±
+        0, 1, 2,  2, 3, 0,
+        4, 5, 6,  6, 7, 4,
+        7, 6, 2,  2, 3, 7,
+        4, 5, 1,  1, 0, 4,
+        4, 7, 3,  3, 0, 4,
+        5, 6, 2,  2, 1, 5 
     };
 
     unsigned int VBO, VAO, EBO;
@@ -122,86 +140,88 @@ int main() {
     glGenBuffers(1, &VBO);
     glGenBuffers(1, &EBO);
 
-    // VAO settings
     glBindVertexArray(VAO);
 
-    // VBO (Àx¦s³»ÂI¸ê®Æ)
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
-    // EBO (Àx¦s¯Á¤Þ¸ê®Æ)
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
-    // position
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-    // color
+
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    // Instance VBO
+    unsigned int instanceVBO;
+    glGenBuffers(1, &instanceVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+
+    glBufferData(GL_ARRAY_BUFFER, NUM_INSTANCES * sizeof(glm::mat4), NULL, GL_DYNAMIC_DRAW);
+
+    std::size_t vec4Size = sizeof(glm::vec4);
+
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4), (void*)0);
+
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4), (void*)(vec4Size));
+
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4), (void*)(2 * vec4Size));
+
+    glEnableVertexAttribArray(5);
+    glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4), (void*)(3 * vec4Size));
+
+    glVertexAttribDivisor(2, 1);
+    glVertexAttribDivisor(3, 1);
+    glVertexAttribDivisor(4, 1);
+    glVertexAttribDivisor(5, 1);
+
     glBindVertexArray(0);
+    std::vector<glm::mat4> modelMatrices(NUM_INSTANCES);
 
     // Render Loop
     while (!glfwWindowShouldClose(window)) {
         processInput(window);
 
+        //  åœ¨ CPU ä¸Šè¨ˆç®—
+        cpu_update_physics(modelMatrices, (float)glfwGetTime());
+
+        // å°‡è³‡æ–™å¾ž CPU ä¸Šå‚³åˆ° GPU
+        glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, NUM_INSTANCES * sizeof(glm::mat4), modelMatrices.data());
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
         // render command
         glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // ±Ò¥Î Shader
         glUseProgram(shaderProgram);
 
-
-        // Model Matrix
-        // Åý¤è¶ôÀH®É¶¡±ÛÂà
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::rotate(model, (float)glfwGetTime() * glm::radians(50.0f), glm::vec3(0.5f, 1.0f, 0.0f));
-
-        // View Matrix
-        // ¦b (0, 0, 3) ªº¦ì¸m¡A¬ÝµÛ­ìÂI (0, 0, 0)
-        glm::mat4 view = glm::mat4(1.0f);
-        view = glm::lookAt(
-            glm::vec3(0.0f, 0.0f, 3.0f), // Äá¼v¾÷¦ì¸m
-            glm::vec3(0.0f, 0.0f, 0.0f), // Äá¼v¾÷¬Ý¦Vªº¥Ø¼Ð
-            glm::vec3(0.0f, 1.0f, 0.0f)  // Äá¼v¾÷ªº "¤W" ¤è¦V
+        glm::mat4 view = glm::lookAt(
+            glm::vec3(0.0f, 15.0f, 30.0f),
+            glm::vec3(0.0f, 0.0f, 0.0f),
+            glm::vec3(0.0f, 1.0f, 0.0f)
         );
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1280.0f / 720.0f, 0.1f, 100.0f);
 
-        // Projection Matrix
-        // ³]©w 45 «×ªºµø³¥ (FOV)
-        glm::mat4 projection = glm::mat4(1.0f);
-        projection = glm::perspective(glm::radians(45.0f), 800.0f / 600.0f, 0.1f, 100.0f);
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
-        // ±N¯x°}¶Ç°e¨ì Shader
-        // ­º¥ý§ä¨ì uniform ÅÜ¼Æ¦b shader ¤¤ªº¦ì¸m
-        int modelLoc = glGetUniformLocation(shaderProgram, "model");
-        int viewLoc = glGetUniformLocation(shaderProgram, "view");
-        int projLoc = glGetUniformLocation(shaderProgram, "projection");
+        glBindVertexArray(VAO);
+        glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0, NUM_INSTANCES);
 
-        // µM«á¤W¶Ç¯x°}¸ê®Æ
-        // glUniformMatrix4fv(location, 1, GL_FALSE, ¯x°}¸ê®Æªº«ü¼Ð)
-        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-
-
-        // Ã¸»s¤è¶ô (¨Ï¥Î¯Á¤ÞÃ¸»s)
-        glBindVertexArray(VAO); // ¸j©w "°t¤è" (VAO ·|¦Û°Ê¸j©w EBO)
-
-        // ¨Ï¥Î glDrawElements ¨ÓÃ¸»s
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-
-        // swap buffers, event handle
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
-    // clean resources
     glDeleteVertexArrays(1, &VAO);
     glDeleteBuffers(1, &VBO);
     glDeleteBuffers(1, &EBO);
+    glDeleteBuffers(1, &instanceVBO);
     glDeleteProgram(shaderProgram);
 
     glfwTerminate();
