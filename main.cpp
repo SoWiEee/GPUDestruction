@@ -1,4 +1,6 @@
-﻿#include <glad/glad.h>
+﻿#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <vector>
@@ -50,14 +52,17 @@ int main(void) {
 
     // cude vertex data
     float vertices[] = {
-        -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, 0.0f, // 0
-         0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f, // 1
-         0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 0.0f, // 2
-        -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f, // 3
-        -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f, // 4
-         0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 1.0f, // 5
-         0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f, // 6
-        -0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 1.0f  // 7
+        // 後面
+        -0.5f, -0.5f, -0.5f,  0.5f, 0.5f, 0.5f, // 0
+         0.5f, -0.5f, -0.5f,  0.5f, 0.5f, 0.5f, // 1
+         0.5f,  0.5f, -0.5f,  0.5f, 0.5f, 0.5f, // 2
+        -0.5f,  0.5f, -0.5f,  0.5f, 0.5f, 0.5f, // 3
+
+        // 前面
+        -0.5f, -0.5f,  0.5f,  0.5f, 0.5f, 0.5f, // 4
+         0.5f, -0.5f,  0.5f,  0.5f, 0.5f, 0.5f, // 5
+         0.5f,  0.5f,  0.5f,  0.5f, 0.5f, 0.5f, // 6
+        -0.5f,  0.5f,  0.5f,  0.5f, 0.5f, 0.5f  // 7
     };
 
     unsigned int indices[] = {
@@ -139,14 +144,15 @@ int main(void) {
         // 啟用 Shader
         ourShader.use();
 
-        // [!! UPDATED !!]
-        glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 15.0f, 30.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1280.0f / 720.0f, 0.1f, 100.0f);
+        // view matrix
+        glm::mat4 view = glm::lookAt(
+            glm::vec3(0.0f, 30.0f, 50.0f), // 攝影機位置 (更高、更遠)
+            glm::vec3(0.0f, 0.0f, 0.0f),   // 攝影機看向原點
+            glm::vec3(0.0f, 1.0f, 0.0f)    // 上方向
+        );
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1280.0f / 720.0f, 0.1f, 200.0f);
         ourShader.setMat4("view", view);
         ourShader.setMat4("projection", projection);
-
-        // glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-        // glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
         // draw all instances
         glBindVertexArray(VAO);
