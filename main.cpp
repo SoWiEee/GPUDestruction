@@ -50,19 +50,20 @@ int main(void) {
     Shader ourShader("shader.vert", "shader.frag");
     PhysicsEngine physicsEngine; // 建立物理引擎
 
-    // cude vertex data
+    // vertex data
     float vertices[] = {
+        // positions          // colors           // texture coords
         // 後面
-        -0.5f, -0.5f, -0.5f,  0.5f, 0.5f, 0.5f, // 0
-         0.5f, -0.5f, -0.5f,  0.5f, 0.5f, 0.5f, // 1
-         0.5f,  0.5f, -0.5f,  0.5f, 0.5f, 0.5f, // 2
-        -0.5f,  0.5f, -0.5f,  0.5f, 0.5f, 0.5f, // 3
+        -0.5f, -0.5f, -0.5f,  0.5f, 0.5f, 0.5f,   0.0f, 0.0f, // 0
+         0.5f, -0.5f, -0.5f,  0.5f, 0.5f, 0.5f,   1.0f, 0.0f, // 1
+         0.5f,  0.5f, -0.5f,  0.5f, 0.5f, 0.5f,   1.0f, 1.0f, // 2
+        -0.5f,  0.5f, -0.5f,  0.5f, 0.5f, 0.5f,   0.0f, 1.0f, // 3
 
         // 前面
-        -0.5f, -0.5f,  0.5f,  0.5f, 0.5f, 0.5f, // 4
-         0.5f, -0.5f,  0.5f,  0.5f, 0.5f, 0.5f, // 5
-         0.5f,  0.5f,  0.5f,  0.5f, 0.5f, 0.5f, // 6
-        -0.5f,  0.5f,  0.5f,  0.5f, 0.5f, 0.5f  // 7
+        -0.5f, -0.5f,  0.5f,  0.5f, 0.5f, 0.5f,   0.0f, 0.0f, // 4
+         0.5f, -0.5f,  0.5f,  0.5f, 0.5f, 0.5f,   1.0f, 0.0f, // 5
+         0.5f,  0.5f,  0.5f,  0.5f, 0.5f, 0.5f,   1.0f, 1.0f, // 6
+        -0.5f,  0.5f,  0.5f,  0.5f, 0.5f, 0.5f,   0.0f, 1.0f  // 7
     };
 
     unsigned int indices[] = {
@@ -80,19 +81,22 @@ int main(void) {
     glGenBuffers(1, &EBO);
 
     glBindVertexArray(VAO);
-
-    // VBO (頂點資料)
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    // 每個頂點的資料大小現在是 8 個 float (3 pos + 3 color + 2 texcoord)
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-    // EBO (索引資料)
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
     // 頂點屬性 (location 0: pos, location 1: color)
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
+
+    // 紋理座標屬性 (location 6)
+    glVertexAttribPointer(6, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(6);
+
 
     // Instance VBO
     unsigned int instanceVBO;
@@ -117,6 +121,30 @@ int main(void) {
     glVertexAttribDivisor(5, 1);
 
     glBindVertexArray(0);
+
+    // Load Texture
+    unsigned int texture1;
+    glGenTextures(1, &texture1);
+    glBindTexture(GL_TEXTURE_2D, texture1);
+    // 設定紋理環繞和過濾選項
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // load image
+    int width, height, nrChannels;
+    unsigned char* data = stbi_load("rock_texture.jpg", &width, &height, &nrChannels, 0);
+    if (data) {
+        GLenum format = GL_RGB;
+        if (nrChannels == 4) format = GL_RGBA;
+
+        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    else {
+        std::cerr << "Failed to load texture" << std::endl;
+    }
+    stbi_image_free(data);
     
     // Render Loop
     float lastFrameTime = 0.0f;
@@ -143,6 +171,13 @@ int main(void) {
 
         // 啟用 Shader
         ourShader.use();
+
+        // bind texture
+        glActiveTexture(GL_TEXTURE0); // 激活紋理單元 0
+        glBindTexture(GL_TEXTURE_2D, texture1); // 綁定我們的紋理
+
+        //  uniform "ourTexture" 綁定到紋理單元 0
+        ourShader.setInt("ourTexture", 0);
 
         // view matrix
         glm::mat4 view = glm::lookAt(
