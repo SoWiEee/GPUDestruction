@@ -71,6 +71,10 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <IncludePath>$(CUDA_PATH);$(IncludePath)</IncludePath>
+    <LibraryPath>$(CUDA_PATH);$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -129,6 +133,9 @@
       <AdditionalLibraryDirectories>C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\lib\x64;C:\Users\MintIce\Programming\GPUDestruction\GPUDestruction\vendor\glfw\lib-vc2022;opengl32.lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>opengl32.lib;glfw3.lib;user32.lib;shell32.lib;gdi32.lib;advapi32.lib;cudart.lib;cuda.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <CudaCompile>
+      <CodeGeneration>compute_75,sm_75</CodeGeneration>
+    </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
@@ -148,6 +155,7 @@
     </None>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="CudaPhysics.h" />
     <ClInclude Include="PhysicsEngine.h" />
     <ClInclude Include="RigidBody.h" />
     <ClInclude Include="Shader.h" />
@@ -155,6 +163,9 @@
   </ItemGroup>
   <ItemGroup>
     <Image Include="rock_texture.jpg" />
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="CudaPhysics.cu" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

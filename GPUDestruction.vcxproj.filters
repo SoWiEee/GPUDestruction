@@ -48,5 +48,18 @@
     <ClInclude Include="stb_image.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
+    <ClInclude Include="CudaPhysics.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="rock_texture.jpg">
+      <Filter>資源檔</Filter>
+    </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="CudaPhysics.cu">
+      <Filter>來源檔案</Filter>
+    </CudaCompile>
   </ItemGroup>
 </Project>

@@ -10,7 +10,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "Shader.h"
-#include "PhysicsEngine.h"
+#include "CudaPhysics.h"
 #include <cuda_runtime.h>
 #include <cuda_gl_interop.h>
 
@@ -48,7 +48,7 @@ int main(void) {
     glEnable(GL_DEPTH_TEST);
 
     Shader ourShader("shader.vert", "shader.frag");
-    PhysicsEngine physicsEngine; // 建立物理引擎
+    CudaPhysics_Init();
 
     // vertex data
     float vertices[] = {
@@ -102,7 +102,7 @@ int main(void) {
     unsigned int instanceVBO;
     glGenBuffers(1, &instanceVBO);
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-    glBufferData(GL_ARRAY_BUFFER, NUM_INSTANCES * sizeof(glm::mat4), NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, CUDA_NUM_INSTANCES * sizeof(glm::mat4), NULL, GL_DYNAMIC_DRAW);
 
     // Instance 屬性 (location 2, 3, 4, 5: model matrix)
     std::size_t vec4Size = sizeof(glm::vec4);
@@ -145,6 +145,7 @@ int main(void) {
         std::cerr << "Failed to load texture" << std::endl;
     }
     stbi_image_free(data);
+    std::vector<glm::mat4> h_modelMatrices(CUDA_NUM_INSTANCES);
     
     // Render Loop
     float lastFrameTime = 0.0f;
@@ -156,13 +157,14 @@ int main(void) {
         processInput(window);
 
         //  呼叫物理引擎來更新所有物體
-        physicsEngine.update(currentTime, deltaTime);
+        CudaPhysics_Update(currentTime, deltaTime);
 
-        // get matrix
-        const std::vector<glm::mat4>& modelMatrices = physicsEngine.getModelMatrices();
-        // 將資料上傳到 GPU
+        // (4a) 從 GPU 把資料抓回 CPU 的 h_modelMatrices
+        CudaPhysics_GetModelMatrices(h_modelMatrices);
+
+        // (4b) 從 CPU 把資料上傳到 VBO
         glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, NUM_INSTANCES * sizeof(glm::mat4), modelMatrices.data());
+        glBufferSubData(GL_ARRAY_BUFFER, 0, CUDA_NUM_INSTANCES * sizeof(glm::mat4), h_modelMatrices.data());
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
         // render command
@@ -185,17 +187,19 @@ int main(void) {
             glm::vec3(0.0f, 0.0f, 0.0f),   // 攝影機看向原點
             glm::vec3(0.0f, 1.0f, 0.0f)    // 上方向
         );
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1280.0f / 720.0f, 0.1f, 200.0f);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1280.0f / 720.0f, 0.1f, 200.0f); // [!] 增加遠裁切面
         ourShader.setMat4("view", view);
         ourShader.setMat4("projection", projection);
 
         // draw all instances
         glBindVertexArray(VAO);
-        glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0, NUM_INSTANCES);
+        glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0, CUDA_NUM_INSTANCES);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
+
+    CudaPhysics_Cleanup();
 
     // cleanup resources
     glDeleteVertexArrays(1, &VAO);
