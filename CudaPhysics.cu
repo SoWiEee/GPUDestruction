@@ -150,6 +150,12 @@ __device__ int getGridKey(const Vec3& pos) {
     return abs(key);
 }
 
+// 根據 3D 座標和網格索引取得網格 Key
+__device__ int getGridKeyFromCoords(int x, int y, int z) {
+    int key = (x * 73856093 ^ y * 19349663 ^ z * 83492791);
+    return abs(key);
+}
+
 // Kernel 1: 建立雜湊網格
 // 每個執行緒 (物體 i) 將自己插入到雜湊表的鏈結串列中
 __global__ void build_grid_kernel(
@@ -187,6 +193,7 @@ __global__ void collide_kernel(
     Vec3* velocities,
     const int* grid_heads, // 讀取網格
     const int* grid_next,  // 讀取網格
+    const Vec3* all_positions,
     float deltaTime
 ) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -214,50 +221,91 @@ __global__ void collide_kernel(
     }
 
     // 物體 vs 物體 碰撞 (Broad + Narrow Phase) ---
-    // (這是一個簡化版：我們只檢查「我自己的」網格)
-    // (一個完整的實作會檢查 3x3x3=27 個網格)
 
-    // 4a. 找到我 (i) 所在的網格鏈結串列的頭部
-    int my_key = getGridKey(pos);
-    int my_hash = my_key % HASH_GRID_SIZE;
-    int neighbor_id = grid_heads[my_hash];
+    // 4a. 取得我 (i) 所在的網格中心座標
+    int my_grid_x = (int)floorf(pos.x / CELL_SIZE);
+    int my_grid_y = (int)floorf(pos.y / CELL_SIZE);
+    int my_grid_z = (int)floorf(pos.z / CELL_SIZE);
 
-    // 4b. 遍歷這個網格的鏈結串列
-    while (neighbor_id != -1) {
-        // 不要和自己碰撞
-        if (neighbor_id == i) {
-            neighbor_id = grid_next[neighbor_id]; // 繼續下一個
-            continue;
-        }
+    // 4b. 遍歷 3x3x3 = 27 個相鄰網格
+    for (int dz = -1; dz <= 1; ++dz) {
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                // 取得鄰居網格的 3D 座標
+                int neighbor_grid_x = my_grid_x + dx;
+                int neighbor_grid_y = my_grid_y + dy;
+                int neighbor_grid_z = my_grid_z + dz;
 
-        // --- 4c. Narrow Phase (AABB 測試) ---
-        Vec3 neighbor_pos = positions[neighbor_id];
-        float size = 1.0f; // 方塊大小 (0.5 + 0.5)
+                // 取得鄰居網格的雜湊 Key
+                int neighbor_key = getGridKeyFromCoords(neighbor_grid_x, neighbor_grid_y, neighbor_grid_z);
+                int neighbor_hash = neighbor_key % HASH_GRID_SIZE;
 
-        if (fabsf(pos.x - neighbor_pos.x) < size &&
-            fabsf(pos.y - neighbor_pos.y) < size &&
-            fabsf(pos.z - neighbor_pos.z) < size)
-        {
-            //  實作一個非常簡化的分離
-            Vec3 diff;
-            diff.x = pos.x - neighbor_pos.x;
-            diff.y = pos.y - neighbor_pos.y;
-            diff.z = pos.z - neighbor_pos.z;
+                // 取得這個網格的鏈結串列頭部
+                int neighbor_id = grid_heads[neighbor_hash];
 
-            float length = sqrtf(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
-            if (length < 0.0001f) length = 1.0f; // 防止除以 0
+                // 遍歷這個網格的鏈結串列
+                while (neighbor_id != -1) {
+                    // 不要和自己碰撞
+                    if (neighbor_id == i) {
+                        neighbor_id = grid_next[neighbor_id]; // 繼續下一個
+                        continue;
+                    }
 
-            float overlap = size - length;
-            if (overlap > 0) {
-                // 1. 位置校正
-                pos.x += (diff.x / length) * overlap * 0.5f;
-                pos.y += (diff.y / length) * overlap * 0.5f;
-                pos.z += (diff.z / length) * overlap * 0.5f;
+                    // [!! NEW !!] 避免重複碰撞 (只檢查 ID 比自己小的物體)
+                    // 這是一個簡單的解決方案，可以讓碰撞只被處理一次
+                    if (neighbor_id > i) {
+                        neighbor_id = grid_next[neighbor_id];
+                        continue;
+                    }
+
+                    // --- 4c. Narrow Phase (AABB 測試) ---
+                    // [!! FIX !!] 從 all_positions 讀取鄰居的位置
+                    Vec3 neighbor_pos = all_positions[neighbor_id];
+                    float size = 1.0f;
+
+                    if (fabsf(pos.x - neighbor_pos.x) < size &&
+                        fabsf(pos.y - neighbor_pos.y) < size &&
+                        fabsf(pos.z - neighbor_pos.z) < size)
+                    {
+                        // 碰撞了！
+
+                        // [!! UPDATED !!] 雙向碰撞反應 + 動量交換 (簡化版)
+                        Vec3 diff;
+                        diff.x = pos.x - neighbor_pos.x;
+                        diff.y = pos.y - neighbor_pos.y;
+                        diff.z = pos.z - neighbor_pos.z;
+
+                        float length = sqrtf(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
+                        if (length < 0.0001f) length = 0.0001f; // 防止除以 0
+
+                        float overlap = size - length;
+                        if (overlap > 0) {
+                            // 1. 位置校正 (雙向推開)
+                            // 每個物體分擔一半的重疊量
+                            pos.x += (diff.x / length) * overlap * 0.5f;
+                            pos.y += (diff.y / length) * overlap * 0.5f;
+                            pos.z += (diff.z / length) * overlap * 0.5f;
+
+                            // 2. 動量交換 (簡化：只反彈 y 軸，沒有考慮摩擦)
+                            // (更完整的會涉及衝量，這裡只是簡單速度反轉)
+                            if (vel.y < 0 && fabsf(diff.y) > fabsf(diff.x) && fabsf(diff.y) > fabsf(diff.z)) {
+                                // 主要碰撞在 Y 軸上
+                                vel.y = -vel.y * restitution;
+                            }
+                            else {
+                                // 其他軸的碰撞，讓它彈性較小，但仍有分離效果
+                                vel.x = -vel.x * 0.1f;
+                                vel.y = -vel.y * 0.1f;
+                                vel.z = -vel.z * 0.1f;
+                            }
+                        }
+                    }
+
+                    // 繼續鏈結串列的下一個
+                    neighbor_id = grid_next[neighbor_id];
+                }
             }
         }
-
-        // 繼續鏈結串列的下一個
-        neighbor_id = grid_next[neighbor_id];
     }
 
     // 寫回狀態
@@ -328,13 +376,13 @@ void CudaPhysics_Update(float time, float deltaTime) {
     const float dt = 1.0f / 60.0f;
 
     int threadsPerBlock = 256;
-    // --- [!! NEW !!] 步驟 1: 清空/初始化網格 ---
+    // 步驟 1: 清空/初始化網格 ---
     // (我們必須每幀都把網格頭部設為 -1)
     int blocks_grid = (HASH_GRID_SIZE + threadsPerBlock - 1) / threadsPerBlock;
     init_kernel << <blocks_grid, threadsPerBlock >> > (d_grid_heads, HASH_GRID_SIZE, -1);
     cudaCheckError(cudaGetLastError()); // 檢查
 
-    // --- [!! NEW !!] 步驟 2: 建立網格 ---
+    // 步驟 2: 建立網格 ---
     int blocks_particles = (CUDA_NUM_INSTANCES + threadsPerBlock - 1) / threadsPerBlock;
     build_grid_kernel << <blocks_particles, threadsPerBlock >> > (
         d_grid_heads,
@@ -350,6 +398,7 @@ void CudaPhysics_Update(float time, float deltaTime) {
         (Vec3*)d_velocities,
         (const int*)d_grid_heads,
         (const int*)d_grid_next,
+        (const Vec3*)d_positions,
         dt
         );
     cudaCheckError(cudaGetLastError());
