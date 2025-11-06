@@ -6,6 +6,7 @@
 #include <device_launch_parameters.h>
 #include <iostream>
 #include <stdio.h>
+#include <vector>
 #include <glm/glm.hpp>
 
 #define cudaCheckError(ans) { gpuAssert((ans), __FILE__, __LINE__); }
@@ -23,10 +24,11 @@ using Vec3 = glm::vec3;
 
 const int CUDA_NUM_INSTANCES = 10000;
 
-// GPU 記憶體指標
-Mat4* d_modelMatrices = nullptr; // Kernel output
+// GPU ptr
+Mat4* d_modelMatrices = nullptr; // kernel output
 Vec3* d_positions = nullptr;     // 位置
 Vec3* d_velocities = nullptr;    // 速度
+
 
 __device__ void setTranslation(Mat4* mat, const Vec3& pos) {
     mat->operator[](0)[0] = 1.0f; mat->operator[](1)[0] = 0.0f; mat->operator[](2)[0] = 0.0f; mat->operator[](3)[0] = pos.x;
@@ -42,11 +44,25 @@ __device__ void setScale(Mat4* mat, const Vec3& scale) {
     mat->operator[](0)[3] = 0.0f;    mat->operator[](1)[3] = 0.0f;    mat->operator[](2)[3] = 0.0f;    mat->operator[](3)[3] = 1.0f;
 }
 
+__device__ Mat4 matrixMultiply(const Mat4& a, const Mat4& b) {
+    Mat4 result;
+    for (int col = 0; col < 4; ++col) {
+        for (int row = 0; row < 4; ++row) {
+            float sum = 0.0f;
+            for (int k = 0; k < 4; ++k) {
+                sum += a[k][row] * b[col][k];
+            }
+            result[col][row] = sum;
+        }
+    }
+    return result;
+}
+
 // CUDA Kernel
 __global__ void physics_kernel(
-    Mat4* modelMatrices, // output
-    Vec3* positions,     // state
-    Vec3* velocities,    // state
+    Mat4* modelMatrices, // 輸出
+    Vec3* positions,     // 狀態 (讀/寫)
+    Vec3* velocities,    // 狀態 (讀/寫)
     float deltaTime
 ) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -54,32 +70,45 @@ __global__ void physics_kernel(
         return;
     }
 
-    // 物理常數
+    // --- 物理常數 ---
     const float mass = 1.0f;
+    // [!! FIX !!] 手動初始化 Vec3，避免 C++ 建構子
     const Vec3 gravity = Vec3(0.0f, -9.8f, 0.0f);
     const float groundY = -2.0f;
-    const float restitution = 0.3f; // 彈性
+    const float restitution = 0.3f;
 
     // --- 1. 讀取目前狀態 ---
     Vec3 pos = positions[i];
     Vec3 vel = velocities[i];
 
     // --- 2. 套用外力 (重力) ---
-    Vec3 force = gravity * mass;
+    // [!! FIX !!] 手動計算 F = m * g (逐分量)
+    Vec3 force;
+    force.x = gravity.x * mass;
+    force.y = gravity.y * mass;
+    force.z = gravity.z * mass;
 
     // --- 3. 積分 (半隱式歐拉法) ---
-    // v_new = v_old + (F/m) * dt
-    vel += (force / mass) * deltaTime;
-    // p_new = p_old + v_new * dt
-    pos += vel * deltaTime;
+    // 手動計算 a = F / m
+    Vec3 acceleration;
+    acceleration.x = force.x / mass;
+    acceleration.y = force.y / mass;
+    acceleration.z = force.z / mass;
+
+    //  手動計算 v_new = v_old + a * dt
+    vel.x = vel.x + acceleration.x * deltaTime;
+    vel.y = vel.y + acceleration.y * deltaTime;
+    vel.z = vel.z + acceleration.z * deltaTime;
+
+    // 手動計算 p_new = p_old + v_new * dt
+    pos.x = pos.x + vel.x * deltaTime;
+    pos.y = pos.y + vel.y * deltaTime;
+    pos.z = pos.z + vel.z * deltaTime;
 
     // --- 4. 碰撞偵測 (與地板) ---
-    float bodyMinY = pos.y - 0.5f; // 假設方塊大小為 1x1x1 (中心點在 pos)
+    float bodyMinY = pos.y - 0.5f;
     if (bodyMinY < groundY) {
-        // 4a. 位置校正 (防止穿透)
         pos.y = groundY + 0.5f;
-
-        // 4b. 速度反應 (反彈)
         if (vel.y < 0.0f) {
             vel.y = -vel.y * restitution;
         }
@@ -92,15 +121,8 @@ __global__ void physics_kernel(
     // --- 6. 產生「輸出」的模型矩陣 ---
     Mat4 transMat, scaleMat;
     setTranslation(&transMat, pos);
-    setScale(&scaleMat, Vec3(0.9f)); // 縮小到 0.9f 讓方塊間有縫隙
-
-    // [!] 我們的輸出是 (T * S)
-    // (我們手動寫 T * S 的矩陣乘法)
-    modelMatrices[i] = transMat; // 先複製平移
-    // 再乘上縮放 (只需修改對角線)
-    modelMatrices[i][0][0] *= 0.9f;
-    modelMatrices[i][1][1] *= 0.9f;
-    modelMatrices[i][2][2] *= 0.9f;
+    setScale(&scaleMat, Vec3(0.9f));
+    modelMatrices[i] = matrixMultiply(transMat, scaleMat);
 }
 
 
@@ -154,12 +176,12 @@ void CudaPhysics_Update(float time, float deltaTime) {
     int threadsPerBlock = 256;
     int blocksPerGrid = (CUDA_NUM_INSTANCES + threadsPerBlock - 1) / threadsPerBlock;
 
-    physics_kernel << <blocksPerGrid, threadsPerBlock >> > (
+    physics_kernel <<<blocksPerGrid, threadsPerBlock >>> (
         (Mat4*)d_modelMatrices,
         (Vec3*)d_positions,
         (Vec3*)d_velocities,
         dt
-        );
+       );
 
     cudaCheckError(cudaGetLastError());
 }

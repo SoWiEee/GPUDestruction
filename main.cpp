@@ -187,7 +187,7 @@ int main(void) {
             glm::vec3(0.0f, 0.0f, 0.0f),   // 攝影機看向原點
             glm::vec3(0.0f, 1.0f, 0.0f)    // 上方向
         );
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1280.0f / 720.0f, 0.1f, 200.0f); // [!] 增加遠裁切面
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1280.0f / 720.0f, 0.1f, 200.0f);
         ourShader.setMat4("view", view);
         ourShader.setMat4("projection", projection);
 
