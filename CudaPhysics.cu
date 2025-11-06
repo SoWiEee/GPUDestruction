@@ -29,6 +29,20 @@ Mat4* d_modelMatrices = nullptr; // kernel output
 Vec3* d_positions = nullptr;     // 位置
 Vec3* d_velocities = nullptr;    // 速度
 
+//  雜湊網格 (Hashed Grid)
+const int HASH_GRID_SIZE = 19997;
+// d_grid_heads: 雜湊表，儲存每個網格「鏈結串列」的頭部 (物體 ID)
+int* d_grid_heads = nullptr;
+// d_grid_next: 儲存下一個物體的 ID (組成鏈結串列)
+int* d_grid_next = nullptr;
+// d_grid_keys: (偵錯用) 儲存每個物體計算出的網格 Key
+int* d_grid_keys = nullptr;
+
+// [!! UPDATED !!]
+// 將 CELL_SIZE 宣告在 __constant__ (常數) 記憶體中
+// 讓 GPU 上的所有 __device__ 和 __global__ 函式都能讀取它
+__constant__ float CELL_SIZE = 1.0f;
+
 
 __device__ void setTranslation(Mat4* mat, const Vec3& pos) {
     mat->operator[](0)[0] = 1.0f; mat->operator[](1)[0] = 0.0f; mat->operator[](2)[0] = 0.0f; mat->operator[](3)[0] = pos.x;
@@ -125,6 +139,144 @@ __global__ void physics_kernel(
     modelMatrices[i] = matrixMultiply(transMat, scaleMat);
 }
 
+__device__ int getGridKey(const Vec3& pos) {
+    int x = (int)floorf(pos.x / CELL_SIZE);
+    int y = (int)floorf(pos.y / CELL_SIZE);
+    int z = (int)floorf(pos.z / CELL_SIZE);
+    // (x*p1 ^ y*p2 ^ z*p3) % N
+    // 73856093, 19349663, 83492791 是有名的 LCG 質數
+    int key = (x * 73856093 ^ y * 19349663 ^ z * 83492791);
+    // [!] 必須是正數
+    return abs(key);
+}
+
+// Kernel 1: 建立雜湊網格
+// 每個執行緒 (物體 i) 將自己插入到雜湊表的鏈結串列中
+__global__ void build_grid_kernel(
+    int* grid_heads,
+    int* grid_next,
+    int* grid_keys,
+    const Vec3* positions
+) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= CUDA_NUM_INSTANCES) return;
+
+    // 1. 計算我 (i) 的網格 Key
+    int key = getGridKey(positions[i]);
+    grid_keys[i] = key; // 儲存 (偵錯用)
+
+    // 2. 計算雜湊表索引
+    int hash = key % HASH_GRID_SIZE;
+
+    // 3. [!! 原子操作 !!] 將我 (i) 插入到鏈結串列的頭部
+    // atomicExch 會「原子地」執行以下兩步：
+    // a) 取得 grid_heads[hash] 的「舊」值 (可能是 -1 或另一個物體 ID)
+    // b) 將 grid_heads[hash] 的值「設定」為 i (我現在是新的頭)
+    int old_head = atomicExch(&grid_heads[hash], i);
+
+    // 4. 將「舊」的頭，連接到我的「下一個」
+    grid_next[i] = old_head;
+}
+
+
+// Kernel 2: 物理計算與碰撞
+// (這取代了我們舊的 physics_kernel)
+__global__ void collide_kernel(
+    Mat4* modelMatrices,
+    Vec3* positions,
+    Vec3* velocities,
+    const int* grid_heads, // 讀取網格
+    const int* grid_next,  // 讀取網格
+    float deltaTime
+) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= CUDA_NUM_INSTANCES) return;
+
+    const float mass = 1.0f;
+    const Vec3 gravity = Vec3(0.0f, -9.8f, 0.0f);
+    const float groundY = -2.0f;
+    const float restitution = 0.3f;
+
+    Vec3 pos = positions[i];
+    Vec3 vel = velocities[i];
+
+    // 套用外力 & 積分
+    Vec3 force; force.x = gravity.x * mass; force.y = gravity.y * mass; force.z = gravity.z * mass;
+    Vec3 acceleration; acceleration.x = force.x / mass; acceleration.y = force.y / mass; acceleration.z = force.z / mass;
+    vel.x += acceleration.x * deltaTime; vel.y += acceleration.y * deltaTime; vel.z += acceleration.z * deltaTime;
+    pos.x += vel.x * deltaTime; pos.y += vel.y * deltaTime; pos.z += vel.z * deltaTime;
+
+    // 碰撞偵測 (地板)
+    float bodyMinY = pos.y - 0.5f;
+    if (bodyMinY < groundY) {
+        pos.y = groundY + 0.5f;
+        if (vel.y < 0.0f) vel.y = -vel.y * restitution;
+    }
+
+    // 物體 vs 物體 碰撞 (Broad + Narrow Phase) ---
+    // (這是一個簡化版：我們只檢查「我自己的」網格)
+    // (一個完整的實作會檢查 3x3x3=27 個網格)
+
+    // 4a. 找到我 (i) 所在的網格鏈結串列的頭部
+    int my_key = getGridKey(pos);
+    int my_hash = my_key % HASH_GRID_SIZE;
+    int neighbor_id = grid_heads[my_hash];
+
+    // 4b. 遍歷這個網格的鏈結串列
+    while (neighbor_id != -1) {
+        // 不要和自己碰撞
+        if (neighbor_id == i) {
+            neighbor_id = grid_next[neighbor_id]; // 繼續下一個
+            continue;
+        }
+
+        // --- 4c. Narrow Phase (AABB 測試) ---
+        Vec3 neighbor_pos = positions[neighbor_id];
+        float size = 1.0f; // 方塊大小 (0.5 + 0.5)
+
+        if (fabsf(pos.x - neighbor_pos.x) < size &&
+            fabsf(pos.y - neighbor_pos.y) < size &&
+            fabsf(pos.z - neighbor_pos.z) < size)
+        {
+            //  實作一個非常簡化的分離
+            Vec3 diff;
+            diff.x = pos.x - neighbor_pos.x;
+            diff.y = pos.y - neighbor_pos.y;
+            diff.z = pos.z - neighbor_pos.z;
+
+            float length = sqrtf(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
+            if (length < 0.0001f) length = 1.0f; // 防止除以 0
+
+            float overlap = size - length;
+            if (overlap > 0) {
+                // 1. 位置校正
+                pos.x += (diff.x / length) * overlap * 0.5f;
+                pos.y += (diff.y / length) * overlap * 0.5f;
+                pos.z += (diff.z / length) * overlap * 0.5f;
+            }
+        }
+
+        // 繼續鏈結串列的下一個
+        neighbor_id = grid_next[neighbor_id];
+    }
+
+    // 寫回狀態
+    positions[i] = pos;
+    velocities[i] = vel;
+
+    // 產生「輸出」的模型矩陣
+    Mat4 transMat, scaleMat;
+    setTranslation(&transMat, pos);
+    setScale(&scaleMat, Vec3(0.9f));
+    modelMatrices[i] = matrixMultiply(transMat, scaleMat);
+}
+
+__global__ void init_kernel(int* array, int size, int value) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size) {
+        array[i] = value;
+    }
+}
 
 // C++ Interface
 
@@ -135,6 +287,11 @@ void CudaPhysics_Init() {
     // allocate state
     cudaCheckError(cudaMalloc((void**)&d_positions, CUDA_NUM_INSTANCES * sizeof(Vec3)));
     cudaCheckError(cudaMalloc((void**)&d_velocities, CUDA_NUM_INSTANCES * sizeof(Vec3)));
+
+    // 分配「網格」記憶體
+    cudaCheckError(cudaMalloc((void**)&d_grid_heads, HASH_GRID_SIZE * sizeof(int)));
+    cudaCheckError(cudaMalloc((void**)&d_grid_next, CUDA_NUM_INSTANCES * sizeof(int)));
+    cudaCheckError(cudaMalloc((void**)&d_grid_keys, CUDA_NUM_INSTANCES * sizeof(int)));
 
     // state init-
     std::vector<Vec3> h_positions(CUDA_NUM_INSTANCES);
@@ -163,26 +320,38 @@ void CudaPhysics_Init() {
         if (n >= CUDA_NUM_INSTANCES) break;
     }
 
-    // 4. 將初始狀態從 CPU (h_...) 複製到 GPU (d_...)
     cudaCheckError(cudaMemcpy(d_positions, h_positions.data(), CUDA_NUM_INSTANCES * sizeof(Vec3), cudaMemcpyHostToDevice));
     cudaCheckError(cudaMemcpy(d_velocities, h_velocities.data(), CUDA_NUM_INSTANCES * sizeof(Vec3), cudaMemcpyHostToDevice));
-
-    // (h_positions 和 h_velocities 會在這裡自動被釋放，非常方便)
 }
 
 void CudaPhysics_Update(float time, float deltaTime) {
     const float dt = 1.0f / 60.0f;
 
     int threadsPerBlock = 256;
-    int blocksPerGrid = (CUDA_NUM_INSTANCES + threadsPerBlock - 1) / threadsPerBlock;
+    // --- [!! NEW !!] 步驟 1: 清空/初始化網格 ---
+    // (我們必須每幀都把網格頭部設為 -1)
+    int blocks_grid = (HASH_GRID_SIZE + threadsPerBlock - 1) / threadsPerBlock;
+    init_kernel << <blocks_grid, threadsPerBlock >> > (d_grid_heads, HASH_GRID_SIZE, -1);
+    cudaCheckError(cudaGetLastError()); // 檢查
 
-    physics_kernel <<<blocksPerGrid, threadsPerBlock >>> (
+    // --- [!! NEW !!] 步驟 2: 建立網格 ---
+    int blocks_particles = (CUDA_NUM_INSTANCES + threadsPerBlock - 1) / threadsPerBlock;
+    build_grid_kernel << <blocks_particles, threadsPerBlock >> > (
+        d_grid_heads,
+        d_grid_next,
+        d_grid_keys,
+        (const Vec3*)d_positions
+        );
+    cudaCheckError(cudaGetLastError());
+
+    collide_kernel << <blocks_particles, threadsPerBlock >> > (
         (Mat4*)d_modelMatrices,
         (Vec3*)d_positions,
         (Vec3*)d_velocities,
+        (const int*)d_grid_heads,
+        (const int*)d_grid_next,
         dt
-       );
-
+        );
     cudaCheckError(cudaGetLastError());
 }
 
