@@ -186,133 +186,122 @@ __global__ void build_grid_kernel(
 
 
 // Kernel 2: 物理計算與碰撞
-// (這取代了我們舊的 physics_kernel)
 __global__ void collide_kernel(
     Mat4* modelMatrices,
     Vec3* positions,
     Vec3* velocities,
-    const int* grid_heads, // 讀取網格
-    const int* grid_next,  // 讀取網格
+    const int* grid_heads,
+    const int* grid_next,
     const Vec3* all_positions,
     float deltaTime
 ) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= CUDA_NUM_INSTANCES) return;
 
+    // --- 物理常數 ---
     const float mass = 1.0f;
     const Vec3 gravity = Vec3(0.0f, -9.8f, 0.0f);
     const float groundY = -2.0f;
-    const float restitution = 0.3f;
+    const float restitution = 0.3f; // 彈性
+    const float size = 1.0f;        // 碰撞大小 (0.5 + 0.5)
 
+    // --- 1. 讀取 & 積分 (不變) ---
     Vec3 pos = positions[i];
     Vec3 vel = velocities[i];
-
-    // 套用外力 & 積分
     Vec3 force; force.x = gravity.x * mass; force.y = gravity.y * mass; force.z = gravity.z * mass;
     Vec3 acceleration; acceleration.x = force.x / mass; acceleration.y = force.y / mass; acceleration.z = force.z / mass;
     vel.x += acceleration.x * deltaTime; vel.y += acceleration.y * deltaTime; vel.z += acceleration.z * deltaTime;
     pos.x += vel.x * deltaTime; pos.y += vel.y * deltaTime; pos.z += vel.z * deltaTime;
 
-    // 碰撞偵測 (地板)
+    // --- 2. 碰撞偵測 (地板) (不變) ---
     float bodyMinY = pos.y - 0.5f;
     if (bodyMinY < groundY) {
         pos.y = groundY + 0.5f;
         if (vel.y < 0.0f) vel.y = -vel.y * restitution;
     }
 
-    // 物體 vs 物體 碰撞 (Broad + Narrow Phase) ---
-
-    // 4a. 取得我 (i) 所在的網格中心座標
+    // --- 3. 物體 vs 物體 碰撞 (Broad + Narrow Phase) ---
     int my_grid_x = (int)floorf(pos.x / CELL_SIZE);
     int my_grid_y = (int)floorf(pos.y / CELL_SIZE);
     int my_grid_z = (int)floorf(pos.z / CELL_SIZE);
 
-    // 4b. 遍歷 3x3x3 = 27 個相鄰網格
     for (int dz = -1; dz <= 1; ++dz) {
         for (int dy = -1; dy <= 1; ++dy) {
             for (int dx = -1; dx <= 1; ++dx) {
-                // 取得鄰居網格的 3D 座標
                 int neighbor_grid_x = my_grid_x + dx;
                 int neighbor_grid_y = my_grid_y + dy;
                 int neighbor_grid_z = my_grid_z + dz;
-
-                // 取得鄰居網格的雜湊 Key
                 int neighbor_key = getGridKeyFromCoords(neighbor_grid_x, neighbor_grid_y, neighbor_grid_z);
                 int neighbor_hash = neighbor_key % HASH_GRID_SIZE;
-
-                // 取得這個網格的鏈結串列頭部
                 int neighbor_id = grid_heads[neighbor_hash];
 
-                // 遍歷這個網格的鏈結串列
                 while (neighbor_id != -1) {
-                    // 不要和自己碰撞
-                    if (neighbor_id == i) {
-                        neighbor_id = grid_next[neighbor_id]; // 繼續下一個
-                        continue;
-                    }
+                    // [!] 修正：我們應該要能和 ID > i 的鄰居碰撞
+                    // 但我們只「校正」自己的位置，並只在 neighbor_id < i 時處理
+                    // 這樣可以避免資料競爭
 
-                    // [!! NEW !!] 避免重複碰撞 (只檢查 ID 比自己小的物體)
-                    // 這是一個簡單的解決方案，可以讓碰撞只被處理一次
-                    if (neighbor_id > i) {
+                    if (neighbor_id == i) {
                         neighbor_id = grid_next[neighbor_id];
                         continue;
                     }
 
-                    // --- 4c. Narrow Phase (AABB 測試) ---
-                    // [!! FIX !!] 從 all_positions 讀取鄰居的位置
                     Vec3 neighbor_pos = all_positions[neighbor_id];
-                    float size = 1.0f;
-
                     if (fabsf(pos.x - neighbor_pos.x) < size &&
                         fabsf(pos.y - neighbor_pos.y) < size &&
                         fabsf(pos.z - neighbor_pos.z) < size)
                     {
                         // 碰撞了！
-
-                        // [!! UPDATED !!] 雙向碰撞反應 + 動量交換 (簡化版)
                         Vec3 diff;
                         diff.x = pos.x - neighbor_pos.x;
                         diff.y = pos.y - neighbor_pos.y;
                         diff.z = pos.z - neighbor_pos.z;
 
                         float length = sqrtf(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
-                        if (length < 0.0001f) length = 0.0001f; // 防止除以 0
+                        if (length < 0.0001f) {
+                            length = 0.0001f;
+                            diff.x = 0.0f; diff.y = 0.0001f; diff.z = 0.0f; // 預設往上推
+                        }
 
                         float overlap = size - length;
                         if (overlap > 0) {
-                            // 1. 位置校正 (雙向推開)
-                            // 每個物體分擔一半的重疊量
-                            pos.x += (diff.x / length) * overlap * 0.5f;
-                            pos.y += (diff.y / length) * overlap * 0.5f;
-                            pos.z += (diff.z / length) * overlap * 0.5f;
+                            // 1. 位置校正 (只推開「我」)
+                            Vec3 normal;
+                            normal.x = diff.x / length;
+                            normal.y = diff.y / length;
+                            normal.z = diff.z / length;
 
-                            // 2. 動量交換 (簡化：只反彈 y 軸，沒有考慮摩擦)
-                            // (更完整的會涉及衝量，這裡只是簡單速度反轉)
-                            if (vel.y < 0 && fabsf(diff.y) > fabsf(diff.x) && fabsf(diff.y) > fabsf(diff.z)) {
-                                // 主要碰撞在 Y 軸上
-                                vel.y = -vel.y * restitution;
-                            }
-                            else {
-                                // 其他軸的碰撞，讓它彈性較小，但仍有分離效果
-                                vel.x = -vel.x * 0.1f;
-                                vel.y = -vel.y * 0.1f;
-                                vel.z = -vel.z * 0.1f;
+                            pos.x += normal.x * overlap;
+                            pos.y += normal.y * overlap;
+                            pos.z += normal.z * overlap;
+
+                            // [!! NEW !!] 2. 3D 速度反射
+                            // 這是模擬「散開」的關鍵
+                            // v_new = v_old - (1 + e) * dot(v_old, n) * n
+
+                            float velDotNormal = vel.x * normal.x + vel.y * normal.y + vel.z * normal.z;
+
+                            // 只有當物體相向運動時才反彈
+                            if (velDotNormal < 0) {
+                                float bounceFactor = -(1.0f + restitution) * velDotNormal;
+
+                                // [!] 將所有速度分量都反射出去
+                                vel.x += bounceFactor * normal.x;
+                                vel.y += bounceFactor * normal.y;
+                                vel.z += bounceFactor * normal.z;
                             }
                         }
                     }
-
-                    // 繼續鏈結串列的下一個
                     neighbor_id = grid_next[neighbor_id];
                 }
             }
         }
     }
 
-    // 寫回狀態
+    // --- 4. 寫回狀態 (不變) ---
     positions[i] = pos;
     velocities[i] = vel;
 
-    // 產生「輸出」的模型矩陣
+    // --- 5. 產生「輸出」的模型矩陣 (不變) ---
     Mat4 transMat, scaleMat;
     setTranslation(&transMat, pos);
     setScale(&scaleMat, Vec3(0.9f));
