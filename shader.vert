@@ -3,7 +3,9 @@
 layout (location = 0) in vec3 aPos;     // position
 layout (location = 1) in vec3 aColor;   // color
 layout (location = 6) in vec2 aTexCoord; // 紋理座標
-layout (location = 2) in mat4 model;   // 實例 Model 矩陣
+layout (location = 2) in mat4 instanceModel; 
+
+uniform mat4 model;
 
 // camera matrices
 uniform mat4 view;
@@ -17,6 +19,13 @@ out vec3 FragPos; //  傳遞世界座標 (用於光照)
 out vec4 FragPosLightSpace; // 在光源視角下的座標
 
 void main() {
+    mat4 finalModel;
+    if (gl_InstanceID == 0) { // 如果不是實例化繪製 (glDrawArrays)
+        finalModel = model;   // 使用 uniform model
+    } else {                  // 如果是實例化繪製 (glDrawElementsInstanced)
+        finalModel = instanceModel; // 使用 instanceModel
+    }
+
     vec4 worldPos = model * vec4(aPos, 1.0);
     FragPos = vec3(worldPos);
 

@@ -56,8 +56,8 @@ int main(void) {
 
     glEnable(GL_DEPTH_TEST);
 
-    Shader ourShader("shader.vert", "shader.frag");
-    Shader depthShader("depth.vert", "depth.frag");
+	Shader ourShader("shader.vert", "shader.frag"); // main shader
+    Shader depthShader("depth.vert", "depth.frag"); // depth shader
     PhysicsEngine physicsEngine; // 建立物理引擎
 
     // vertex data
@@ -103,8 +103,8 @@ int main(void) {
     // 將深度紋理附加到 FBO
     glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMapTexture, 0);
-    glDrawBuffer(GL_NONE); // 我們不需要畫顏色
-    glReadBuffer(GL_NONE); // 我們也不需要讀顏色
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cerr << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!" << std::endl;
     glBindFramebuffer(GL_FRAMEBUFFER, 0); // 解綁
@@ -156,6 +156,79 @@ int main(void) {
 
     glBindVertexArray(0);
 
+    // ground setup
+    unsigned int groundVAO, groundVBO;
+    glGenVertexArrays(1, &groundVAO);
+    glGenBuffers(1, &groundVBO);
+    glBindVertexArray(groundVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, groundVBO);
+
+    // 地面方塊的頂點資料 (一個 100x1x100 的巨大方塊)
+    float groundVertices[] = {
+        // positions          // colors           // texture coords
+        // 背面 (Z 負軸)
+        -0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 0.0f,
+         0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 0.0f,
+         0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 1.0f,
+         0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 1.0f,
+        -0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 1.0f,
+        -0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 0.0f,
+
+        // 正面 (Z 正軸)
+        -0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 0.0f,
+         0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 0.0f,
+         0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 1.0f,
+         0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 1.0f,
+        -0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 1.0f,
+        -0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 0.0f,
+
+        // 左面 (X 負軸)
+        -0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 0.0f,
+        -0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 1.0f,
+        -0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 1.0f,
+        -0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 1.0f,
+        -0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 0.0f,
+        -0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 0.0f,
+
+        // 右面 (X 正軸)
+         0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 0.0f,
+         0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 1.0f,
+         0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 1.0f,
+         0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 1.0f,
+         0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 0.0f,
+         0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 0.0f,
+
+         // 底面 (Y 負軸)
+         -0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 1.0f,
+          0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 1.0f,
+          0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 0.0f,
+          0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 0.0f,
+         -0.5f, -0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 0.0f,
+         -0.5f, -0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 1.0f,
+
+         // 頂面 (Y 正軸)
+         -0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 1.0f,
+          0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 1.0f,
+          0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 0.0f,
+          0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   1.0f, 0.0f,
+         -0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 0.0f,
+         -0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 1.0f,   0.0f, 1.0f
+    };
+    glBufferData(GL_ARRAY_BUFFER, sizeof(groundVertices), groundVertices, GL_STATIC_DRAW);
+
+    // 設定頂點屬性指標
+    // 位置 (aPos)
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    // 顏色 (aColor)
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    // 紋理座標 (aTexCoord)
+    glVertexAttribPointer(6, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(6);
+
+    glBindVertexArray(0); // 解綁 VAO
+
     // Load Texture
     unsigned int texture1;
     glGenTextures(1, &texture1);
@@ -165,7 +238,7 @@ int main(void) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    // load image
+    // load rock texture
     int width, height, nrChannels;
     unsigned char* data = stbi_load("rock_texture.jpg", &width, &height, &nrChannels, 0);
     if (data) {
@@ -179,6 +252,38 @@ int main(void) {
         std::cerr << "Failed to load texture" << std::endl;
     }
     stbi_image_free(data);
+
+    // load ground texture
+    unsigned int texture2;
+    glGenTextures(1, &texture2);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, texture2);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    int width2, height2, nrChannels2;
+    unsigned char* data2 = stbi_load("ground_texture.png", &width2, &height2, &nrChannels2, 0);
+    if (data2)
+    {
+        GLenum format;
+        if (nrChannels2 == 1)
+            format = GL_RED;
+        else if (nrChannels2 == 3)
+            format = GL_RGB;
+        else if (nrChannels2 == 4)
+            format = GL_RGBA;
+
+        glTexImage2D(GL_TEXTURE_2D, 0, format, width2, height2, 0, format, GL_UNSIGNED_BYTE, data2);
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    else
+    {
+        std::cout << "Failed to load ground texture" << std::endl;
+    }
+    stbi_image_free(data2);
     
     // Render Loop
     float lastFrameTime = 0.0f;
@@ -216,9 +321,20 @@ int main(void) {
         glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
         glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
         glClear(GL_DEPTH_BUFFER_BIT);
-        // 為了效能，我們只在 Pass 1 綁定 VAO
         glBindVertexArray(VAO);
+        ourShader.setInt("isGround", 0);
         glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0, NUM_INSTANCES);
+
+        // 繪製地面方塊
+        glm::mat4 groundModel = glm::mat4(1.0f);
+        groundModel = glm::translate(groundModel, glm::vec3(0.0f, -2.5f, 0.0f)); // 放置在 Y=-2.5
+        groundModel = glm::scale(groundModel, glm::vec3(100.0f, 1.0f, 100.0f)); // 100x1x100 巨大方塊
+        ourShader.setInt("isGround", 1);
+        depthShader.setMat4("model", groundModel); // 將 Model 矩陣傳給 Shader
+
+        glBindVertexArray(groundVAO); // 綁定地面 VAO
+        glDrawArrays(GL_TRIANGLES, 0, 36); // 繪製單一個方塊 (36 個頂點)
+        glBindVertexArray(0); // 解綁
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
         // PASS 2 顏色通道 (渲染到螢幕)
@@ -242,14 +358,23 @@ int main(void) {
         // 綁定紋理
         ourShader.setInt("ourTexture", 0);
         ourShader.setInt("shadowMap", 1);
+        ourShader.setInt("groundTexture", 2);
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texture1);       // 石塊紋理
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, depthMapTexture); // 陰影貼圖
+        glActiveTexture(GL_TEXTURE2);                  // 地板貼圖
+        glBindTexture(GL_TEXTURE_2D, texture2);
 
-        // draw all instances
+        // 石塊實例
+        glBindVertexArray(VAO);
         glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0, NUM_INSTANCES);
+        ourShader.setMat4("model", groundModel);
+
+        glBindVertexArray(groundVAO); // 綁定地面 VAO
+        glDrawArrays(GL_TRIANGLES, 0, 36); // 繪製單一個方塊
+        glBindVertexArray(0); // 解綁
 
         glfwSwapBuffers(window);
         glfwPollEvents();
@@ -262,6 +387,8 @@ int main(void) {
     glDeleteBuffers(1, &instanceVBO);
     glDeleteFramebuffers(1, &depthMapFBO);
     glDeleteTextures(1, &depthMapTexture);
+    glDeleteVertexArrays(1, &groundVAO);
+    glDeleteBuffers(1, &groundVBO);
 
     glfwTerminate();
     return 0;

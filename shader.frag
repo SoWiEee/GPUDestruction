@@ -9,6 +9,9 @@ out vec4 FragColor;
 
 uniform sampler2D ourTexture; // 石塊紋理
 uniform sampler2D shadowMap;  // 陰影貼圖
+uniform sampler2D groundTexture;
+
+uniform bool isGround;
 
 // 光源位置 (用於計算光照)
 uniform vec3 lightPos;
@@ -42,6 +45,12 @@ float CalculateShadow(vec4 fragPosLightSpace) {
 void main() {
     // 取得基礎紋理顏色
     vec4 texColor = texture(ourTexture, TexCoord) * vec4(ourColor, 1.0);
+
+    if (isGround) {
+        texColor = texture(groundTexture, TexCoord) * vec4(ourColor, 1.0);
+    } else {
+        texColor = texture(ourTexture, TexCoord) * vec4(ourColor, 1.0);
+    }
     
     // 計算基礎光照 (Blinn-Phong)
     vec3 ambient = 0.3 * texColor.rgb; // 環境光
